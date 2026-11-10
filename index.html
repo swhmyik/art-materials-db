@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>絵の資料庫 - Art Materials DB</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif; background: #f4f4f6; color: #222; min-width: 1024px; }
+  header { background: #222; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 20px; margin: 0 8px 0 0; }
+  header .sub { font-size: 12px; color: #bbb; }
+  header button, .btn { background: #fff; color: #222; border: 1px solid #ccc; border-radius: 6px; padding: 8px 12px; cursor: pointer; font-size: 14px; }
+  header button:hover, .btn:hover { background: #eee; }
+  header button.primary { background: #2f7cf6; color: #fff; border-color: #2f7cf6; }
+  header button.primary:hover { background: #2568d6; }
+  #status { font-size: 13px; color: #ffe08a; min-height: 1em; }
+  .layout { display: flex; align-items: flex-start; }
+  aside { width: 280px; flex-shrink: 0; background: #fff; border-right: 1px solid #ddd; padding: 16px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  aside h2 { font-size: 14px; margin: 18px 0 8px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+  aside h2:first-child { margin-top: 0; }
+  aside input[type="text"], aside input[type="search"], aside input[type="date"], aside select, aside textarea { width: 100%; padding: 7px 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
+  aside label { font-size: 13px; display: block; margin: 6px 0; }
+  .taglist, .charlist { max-height: 220px; overflow-y: auto; border: 1px solid #eee; border-radius: 5px; padding: 6px; }
+  .tagchip { display: inline-block; margin: 3px 2px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 20px; background: #fff; cursor: pointer; font-size: 13px; }
+  .tagchip.active { background: #2f7cf6; color: #fff; border-color: #2f7cf6; }
+  .tagchip .count { opacity: .75; font-size: 12px; }
+  main { flex: 1; padding: 16px 20px; min-width: 0; }
+  #resultInfo { font-size: 14px; margin: 4px 0 12px; color: #555; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; cursor: pointer; }
+  .card:hover { border-color: #2f7cf6; }
+  .card img { width: 100%; height: 180px; object-fit: cover; display: block; background: #e9e9ee; }
+  .card .meta { padding: 8px 10px; font-size: 13px; }
+  .card .title { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .date { color: #666; font-size: 12px; margin-top: 2px; }
+  .card .tags { color: #2f7cf6; font-size: 12px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fav { color: #f5a623; }
+  #moreBtn { display: block; margin: 20px auto; padding: 10px 28px; font-size: 15px; }
+  .empty { text-align: center; color: #777; padding: 60px 0; }
+  /* modal */
+  #modalOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 100; }
+  #modalOverlay.open { display: flex; align-items: center; justify-content: center; }
+  #modal { background: #fff; width: 960px; max-width: 94vw; max-height: 92vh; overflow-y: auto; border-radius: 10px; padding: 18px; display: flex; gap: 18px; }
+  #modalImgWrap { flex: 1; min-width: 0; }
+  #modalImg { width: 100%; max-height: 72vh; object-fit: contain; background: #eee; border-radius: 6px; }
+  #modalForm { width: 320px; flex-shrink: 0; }
+  #modalForm label { display: block; font-size: 13px; margin: 10px 0 4px; }
+  #modalForm input[type="text"], #modalForm textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
+  #modalForm textarea { height: 90px; resize: vertical; }
+  .modalBtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .danger { background: #d33 !important; color: #fff !important; border-color: #d33 !important; }
+  #saveState { font-size: 12px; color: #2a7a2a; margin-top: 8px; min-height: 1em; }
+  .note { font-size: 12px; color: #777; margin-top: 16px; line-height: 1.6; }
+  .dropHint { border: 2px dashed #bbb; border-radius: 8px; padding: 14px; text-align: center; color: #777; font-size: 13px; margin-bottom: 12px; }
+  .dropHint.over { border-color: #2f7cf6; background: #eef4ff; color: #2f7cf6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>絵の資料庫</h1><span class="sub">Art Materials DB — PC専用・ブラウザ内に保存</span>
+  <button class="primary" id="addBtn">＋ 画像を追加</button>
+  <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+  <button id="exportFullBtn">ZIP保存 (元画像込)</button>
+  <button id="exportLightBtn">軽量ZIP</button>
+  <button id="restoreBtn">復元</button>
+  <input type="file" id="restoreInput" accept=".zip,application/zip" multiple hidden>
+  <span id="status"></span>
+</header>
+<div class="layout">
+  <aside>
+    <h2>検索</h2>
+    <input type="search" id="keyword" placeholder="タイトル・メモ・タグ・キャラで検索">
+    <h2>並び替え</h2>
+    <select id="sortSel"><option value="new">新しい順</option><option value="old">古い順</option></select>
+    <label><input type="checkbox" id="favOnly"> ★ お気に入りのみ</label>
+    <h2>期間</h2>
+    <label>開始日 <input type="date" id="startDate"></label>
+    <label>終了日 <input type="date" id="endDate"></label>
+    <h2>タグ（AND絞り込み）</h2>
+    <div class="taglist" id="tagList"><span style="color:#999;font-size:13px;">タグなし</span></div>
+    <h2>キャラクター</h2>
+    <div class="charlist" id="charList"><span style="color:#999;font-size:13px;">なし</span></div>
+    <div style="margin-top:16px;"><button class="btn" id="clearBtn" style="width:100%;">フィルタをすべて解除</button></div>
+    <p class="note">データはこのPCのブラウザ（IndexedDB）にだけ保存されます。サーバーへのアップロードはありません。ブラウザのデータを消すと消えるので、定期的にZIP保存をしてください。</p>
+  </aside>
+  <main>
+    <div class="dropHint" id="dropHint">ここに画像ファイルをドラッグ＆ドロップでも追加できます（PNG / JPG / WebP / GIF）</div>
+    <div id="resultInfo"></div>
+    <div id="grid"></div>
+    <div id="emptyMsg" class="empty" style="display:none;">まだ画像がありません。「＋ 画像を追加」から登録してください。</div>
+    <button class="btn" id="moreBtn" style="display:none;">もっと表示</button>
+  </main>
+</div>
+
+<div id="modalOverlay">
+  <div id="modal">
+    <div id="modalImgWrap"><img id="modalImg" alt="詳細画像"><div id="modalMeta" style="font-size:13px;color:#555;margin-top:8px;"></div></div>
+    <div id="modalForm">
+      <h3 style="margin:0;">詳細・編集</h3>
+      <label>タイトル</label><input type="text" id="mTitle">
+      <label>キャラクター</label><input type="text" id="mChar" placeholder="例：オリキャラA">
+      <label>タグ（カンマ区切り）</label><input type="text" id="mTags" placeholder="例：髪, 線画, 着色済み">
+      <label>メモ</label><textarea id="mMemo" placeholder="パレット、使った手法、出典など"></textarea>
+      <label><input type="checkbox" id="mFav"> ★ お気に入り</label>
+      <div id="saveState"></div>
+      <div class="modalBtns">
+        <button class="btn" id="sameDateBtn">同じ作成日を検索</button>
+        <button class="btn" id="closeBtn">閉じる</button>
+        <button class="btn danger" id="deleteBtn">削除</button>
+      </div>
+      <p class="note">編集は入力すると自動で保存されます。</p>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+/* 絵の資料庫 - PC専用 / IndexedDBのみ / サーバーなし */
+const DB_NAME = "art-materials-db";
+const DB_VERSION = 1;
+const PAGE_SIZE = 100;
+const SPLIT_COUNT = 2000;
+const SPLIT_BYTES = 3.5 * 1024 * 1024 * 1024;
+
+let db = null;
+let allItems = [];
+let filtered = [];
+let displayed = 0;
+let currentId = null;
+let modalObjectUrl = null;
+const gridObjectUrls = new Set();
+const selectedTags = new Set();
+const selectedChars = new Set();
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+function setStatus(msg) { statusEl.textContent = msg || ""; }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function fmtDate(ts) { const d = new Date(ts); const p = (n) => String(n).padStart(2, "0"); return d.getFullYear() + "/" + p(d.getMonth() + 1) + "/" + p(d.getDate()); }
+function dateInputVal(ts) { const d = new Date(ts); const p = (n) => String(n).padStart(2, "0"); return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()); }
+function dayStart(ts) { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function dayEnd(ts) { const d = new Date(ts); d.setHours(23, 59, 59, 999); return d.getTime(); }
+function uid() { return (crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.random().toString(36).slice(2)); }
+function sanitizeFileName(n) { return String(n || "image").replace(/[\\/:*?"<>|]/g, "_"); }
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains("items")) d.createObjectStore("items", { keyPath: "id" });
+      if (!d.objectStoreNames.contains("blobs")) d.createObjectStore("blobs", { keyPath: "id" });
+      if (!d.objectStoreNames.contains("thumbs")) d.createObjectStore("thumbs", { keyPath: "id" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function tx(storeNames, mode) { return db.transaction(storeNames, mode); }
+function storeGet(store, key) {
+  return new Promise((res, rej) => { const r = tx([store], "readonly").objectStore(store).get(key); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+}
+function storeGetAll(store) {
+  return new Promise((res, rej) => { const r = tx([store], "readonly").objectStore(store).getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error); });
+}
+function storePut(store, value) {
+  return new Promise((res, rej) => { const r = tx([store], "readwrite").objectStore(store).put(value); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
+}
+function storeDelete(store, key) {
+  return new Promise((res, rej) => { const r = tx([store], "readwrite").objectStore(store).delete(key); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
+}
+
+async function createThumbnail(blob) {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const max = 320;
+    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    if (bitmap.close) bitmap.close();
+    const thumb = await new Promise((res) => canvas.toBlob(res, "image/webp", 0.8));
+    return thumb || blob;
+  } catch (e) {
+    return blob;
+  }
+}
+
+async function loadAll() {
+  allItems = await storeGetAll("items");
+  allItems.sort((a, b) => b.createdAt - a.createdAt);
+  renderTagCharLists();
+  applyFilters();
+}
+
+function renderTagCharLists() {
+  const tagCounts = new Map(), charCounts = new Map();
+  for (const it of allItems) {
+    for (const t of (it.tags || [])) tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
+    if (it.character) charCounts.set(it.character, (charCounts.get(it.character) || 0) + 1);
+  }
+  const tagList = $("tagList"), charList = $("charList");
+  tagList.innerHTML = ""; charList.innerHTML = "";
+  if (tagCounts.size === 0) tagList.innerHTML = '<span style="color:#999;font-size:13px;">タグなし</span>';
+  for (const [tag, n] of [...tagCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ja"))) {
+    const b = document.createElement("button");
+    b.className = "tagchip" + (selectedTags.has(tag) ? " active" : "");
+    b.innerHTML = esc(tag) + ' <span class="count">(' + n + ")</span>";
+    b.onclick = () => { selectedTags.has(tag) ? selectedTags.delete(tag) : selectedTags.add(tag); renderTagCharLists(); applyFilters(); };
+    tagList.appendChild(b);
+  }
+  if (charCounts.size === 0) charList.innerHTML = '<span style="color:#999;font-size:13px;">なし</span>';
+  for (const [ch, n] of [...charCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ja"))) {
+    const b = document.createElement("button");
+    b.className = "tagchip" + (selectedChars.has(ch) ? " active" : "");
+    b.innerHTML = esc(ch) + ' <span class="count">(' + n + ")</span>";
+    b.onclick = () => { selectedChars.has(ch) ? selectedChars.delete(ch) : selectedChars.add(ch); renderTagCharLists(); applyFilters(); };
+    charList.appendChild(b);
+  }
+}
+
+function applyFilters() {
+  const kw = $("keyword").value.trim().toLowerCase();
+  const favOnly = $("favOnly").checked;
+  const start = $("startDate").value ? new Date($("startDate").value + "T00:00:00").getTime() : null;
+  const end = $("endDate").value ? new Date($("endDate").value + "T23:59:59").getTime() : null;
+  const sort = $("sortSel").value;
+  filtered = allItems.filter((it) => {
+    if (favOnly && !it.favorite) return false;
+    if (start != null && it.createdAt < start) return false;
+    if (end != null && it.createdAt > end) return false;
+    if (selectedTags.size > 0) { const tags = it.tags || []; for (const t of selectedTags) if (!tags.includes(t)) return false; }
+    if (selectedChars.size > 0 && !selectedChars.has(it.character || "")) return false;
+    if (kw) {
+      const hay = [it.title, it.memo, it.character, (it.tags || []).join(" ")].join(" ").toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    return true;
+  });
+  filtered.sort((a, b) => sort === "old" ? a.createdAt - b.createdAt : b.createdAt - a.createdAt);
+  displayed = 0;
+  renderGrid(true);
+}
+
+function revokeGridUrls() { for (const u of gridObjectUrls) URL.revokeObjectURL(u); gridObjectUrls.clear(); }
+
+async function renderGrid(reset) {
+  const grid = $("grid");
+  if (reset) { revokeGridUrls(); grid.innerHTML = ""; displayed = 0; }
+  const slice = filtered.slice(displayed, displayed + PAGE_SIZE);
+  $("resultInfo").textContent = filtered.length + " 件 / 全 " + allItems.length + " 件";
+  $("emptyMsg").style.display = filtered.length === 0 ? "block" : "none";
+  for (const it of slice) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const img = document.createElement("img");
+    img.alt = it.title || "";
+    const thumbRec = await storeGet("thumbs", it.id);
+    const blobRec = thumbRec || await storeGet("blobs", it.id);
+    if (blobRec && blobRec.blob) {
+      const url = URL.createObjectURL(blobRec.blob);
+      gridObjectUrls.add(url);
+      img.src = url;
+    }
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.innerHTML = '<div class="title">' + (it.favorite ? '<span class="fav">★</span> ' : "") + esc(it.title || "") + '</div>'
+      + '<div class="date">' + fmtDate(it.createdAt) + (it.character ? " ・ " + esc(it.character) : "") + "</div>"
+      + '<div class="tags">' + esc((it.tags || []).join(", ")) + "</div>";
+    card.appendChild(img); card.appendChild(meta);
+    card.onclick = () => openModal(it.id);
+    grid.appendChild(card);
+  }
+  displayed += slice.length;
+  $("moreBtn").style.display = displayed < filtered.length ? "block" : "none";
+}
+$("moreBtn").onclick = () => renderGrid(false);
+</script>
+<script>
+"use strict";
+async function addFiles(fileList) {
+  const files = [...fileList].filter((f) => f && f.type && f.type.startsWith("image/"));
+  if (files.length === 0) { setStatus("画像ファイルを選択してください。"); return; }
+  setStatus("取り込み中… " + files.length + " 件");
+  let added = 0;
+  for (const file of files) {
+    try {
+      const id = uid();
+      const thumb = await createThumbnail(file);
+      const item = {
+        id: id,
+        title: file.name || "無題",
+        tags: [],
+        character: "",
+        memo: "",
+        favorite: false,
+        createdAt: (file.lastModified && !isNaN(file.lastModified)) ? file.lastModified : Date.now(),
+        fileName: file.name || "image",
+        mime: file.type || "image/png"
+      };
+      await storePut("items", item);
+      await storePut("blobs", { id: id, blob: file });
+      await storePut("thumbs", { id: id, blob: thumb });
+      added++;
+    } catch (e) { console.error(e); }
+  }
+  await loadAll();
+  setStatus(added + " 件を追加しました。");
+}
+
+$("addBtn").onclick = () => $("fileInput").click();
+$("fileInput").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
+const dropHint = $("dropHint");
+["dragover", "dragenter"].forEach((ev) => dropHint.addEventListener(ev, (e) => { e.preventDefault(); dropHint.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => dropHint.addEventListener(ev, (e) => { e.preventDefault(); dropHint.classList.remove("over"); }));
+dropHint.addEventListener("drop", (e) => { if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => e.preventDefault());
+
+/* フィルタ */
+$("keyword").addEventListener("input", applyFilters);
+$("sortSel").addEventListener("change", applyFilters);
+$("favOnly").addEventListener("change", applyFilters);
+$("startDate").addEventListener("change", applyFilters);
+$("endDate").addEventListener("change", applyFilters);
+$("clearBtn").onclick = () => {
+  $("keyword").value = ""; $("favOnly").checked = false; $("startDate").value = ""; $("endDate").value = "";
+  $("sortSel").value = "new"; selectedTags.clear(); selectedChars.clear();
+  renderTagCharLists(); applyFilters(); setStatus("フィルタを解除しました。");
+};
+
+/* 詳細モーダル */
+function closeModal() {
+  if (modalObjectUrl) { URL.revokeObjectURL(modalObjectUrl); modalObjectUrl = null; }
+  $("modalOverlay").classList.remove("open");
+  currentId = null;
+}
+async function openModal(id) {
+  const it = allItems.find((x) => x.id === id);
+  if (!it) return;
+  currentId = id;
+  const blobRec = await storeGet("blobs", id);
+  const thumbRec = !blobRec ? await storeGet("thumbs", id) : null;
+  const rec = blobRec || thumbRec;
+  if (modalObjectUrl) URL.revokeObjectURL(modalObjectUrl);
+  modalObjectUrl = rec && rec.blob ? URL.createObjectURL(rec.blob) : "";
+  $("modalImg").src = modalObjectUrl;
+  $("modalMeta").textContent = (it.fileName || "") + " ・ " + fmtDate(it.createdAt) + " ・ " + (it.mime || "");
+  $("mTitle").value = it.title || "";
+  $("mChar").value = it.character || "";
+  $("mTags").value = (it.tags || []).join(", ");
+  $("mMemo").value = it.memo || "";
+  $("mFav").checked = !!it.favorite;
+  $("saveState").textContent = "";
+  $("modalOverlay").classList.add("open");
+}
+async function saveCurrent() {
+  if (!currentId) return;
+  const it = allItems.find((x) => x.id === currentId);
+  if (!it) return;
+  it.title = $("mTitle").value.trim() || it.title;
+  it.character = $("mChar").value.trim();
+  it.tags = $("mTags").value.split(",").map((s) => s.trim()).filter(Boolean);
+  it.memo = $("mMemo").value;
+  it.favorite = $("mFav").checked;
+  await storePut("items", it);
+  $("saveState").textContent = "保存しました " + new Date().toLocaleTimeString("ja-JP");
+  renderTagCharLists();
+  applyFilters();
+}
+$("mTitle").addEventListener("change", saveCurrent);
+$("mChar").addEventListener("change", saveCurrent);
+$("mTags").addEventListener("change", saveCurrent);
+$("mMemo").addEventListener("change", saveCurrent);
+$("mFav").addEventListener("change", saveCurrent);
+$("closeBtn").onclick = closeModal;
+$("modalOverlay").addEventListener("click", (e) => { if (e.target === $("modalOverlay")) closeModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+$("sameDateBtn").onclick = async () => {
+  const it = allItems.find((x) => x.id === currentId);
+  if (!it) return;
+  const d = dateInputVal(it.createdAt);
+  $("startDate").value = d; $("endDate").value = d;
+  closeModal(); applyFilters(); setStatus(fmtDate(it.createdAt) + " の画像を表示しています。");
+};
+$("deleteBtn").onclick = async () => {
+  const it = allItems.find((x) => x.id === currentId);
+  if (!it) return;
+  if (!confirm("「" + (it.title || "") + "」を削除しますか？この操作は取り消せません。")) return;
+  await storeDelete("items", it.id);
+  await storeDelete("blobs", it.id);
+  await storeDelete("thumbs", it.id);
+  closeModal(); await loadAll(); setStatus("削除しました。");
+};
+
+/* ZIP バックアップ / 復元 */
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+}
+function chunkItems(items, blobMap, thumbMap, light) {
+  const chunks = []; let cur = [], curBytes = 0;
+  for (const it of items) {
+    const b = light ? (thumbMap.get(it.id) || null) : (blobMap.get(it.id) || null);
+    const sz = b ? b.size : 0;
+    if (cur.length > 0 && (cur.length >= SPLIT_COUNT || curBytes + sz > SPLIT_BYTES)) { chunks.push(cur); cur = []; curBytes = 0; }
+    cur.push(it); curBytes += sz;
+  }
+  if (cur.length > 0) chunks.push(cur);
+  return chunks;
+}
+async function exportZip(light) {
+  if (typeof JSZip === "undefined") { setStatus("JSZipが読み込めていません。インターネットに接続してから再度開いてください。"); alert("JSZipが読み込めていません。インターネットに接続してから再度開いてください。"); return; }
+  if (allItems.length === 0) { setStatus("保存する画像がありません。"); return; }
+  setStatus("ZIPを作成中… " + allItems.length + " 件");
+  try {
+    const blobs = await storeGetAll("blobs");
+    const thumbs = await storeGetAll("thumbs");
+    const blobMap = new Map(blobs.map((r) => [r.id, r.blob]));
+    const thumbMap = new Map(thumbs.map((r) => [r.id, r.blob]));
+    const chunks = chunkItems(allItems, blobMap, thumbMap, light);
+    const kind = light ? "light" : "full";
+    for (let i = 0; i < chunks.length; i++) {
+      const zip = new JSZip();
+      zip.file("metadata.json", JSON.stringify(chunks[i], null, 2));
+      for (const it of chunks[i]) {
+        if (light) {
+          const t = thumbMap.get(it.id);
+          if (t) zip.file("thumbnails/" + it.id + ".webp", t);
+        } else {
+          const b = blobMap.get(it.id);
+          if (b) zip.file("images/" + it.id + "_" + sanitizeFileName(it.fileName || "image"), b);
+          const t = thumbMap.get(it.id);
+          if (t) zip.file("thumbnails/" + it.id + ".webp", t);
+        }
+      }
+      const out = await zip.generateAsync({ type: "blob" }, (m) => setStatus("ZIPを作成中… " + Math.round(m.percent) + "%（part " + (i + 1) + "/" + chunks.length + "）"));
+      const name = chunks.length > 1
+        ? "art-materials-db-" + kind + "-part" + String(i + 1).padStart(2, "0") + ".zip"
+        : "art-materials-db-" + kind + ".zip";
+      downloadBlob(out, name);
+      if (i < chunks.length - 1) await new Promise((r) => setTimeout(r, 800));
+    }
+    setStatus((light ? "軽量ZIP" : "ZIP保存") + "を " + chunks.length + " 個出力しました。" + (chunks.length > 1 ? " 2,000件 / 約3.5GBごとに分割しています。" : ""));
+  } catch (e) { console.error(e); setStatus("ZIPの作成に失敗しました: " + e.message); }
+}
+$("exportFullBtn").onclick = () => exportZip(false);
+$("exportLightBtn").onclick = () => exportZip(true);
+
+$("restoreBtn").onclick = () => $("restoreInput").click();
+$("restoreInput").addEventListener("change", async (e) => {
+  if (typeof JSZip === "undefined") { setStatus("JSZipが読み込めていません。インターネットに接続してから再度開いてください。"); e.target.value = ""; return; }
+  const files = [...e.target.files];
+  e.target.value = "";
+  if (files.length === 0) return;
+  setStatus("復元中… " + files.length + " 個のZIP");
+  let added = 0, skipped = 0;
+  try {
+    const existing = new Set(allItems.map((x) => x.id));
+    for (const f of files) {
+      const zip = await JSZip.loadAsync(f);
+      const metaFile = zip.file("metadata.json");
+      if (!metaFile) { setStatus("metadata.json が見つからないZIPがあります: " + f.name); continue; }
+      const items = JSON.parse(await metaFile.async("string"));
+      for (const it of items) {
+        if (!it || !it.id || existing.has(it.id)) { skipped++; continue; }
+        let orig = null, thumb = null;
+        const imgFiles = zip.filter((p) => p.startsWith("images/" + it.id + "_"));
+        if (imgFiles.length > 0) orig = await imgFiles[0].async("blob");
+        const thFile = zip.file("thumbnails/" + it.id + ".webp");
+        if (thFile) thumb = await thFile.async("blob");
+        const blob = orig || thumb;
+        if (!blob) { skipped++; continue; }
+        if (!thumb && orig) thumb = await createThumbnail(orig);
+        const item = { id: it.id, title: it.title || it.fileName || "無題", tags: Array.isArray(it.tags) ? it.tags : [], character: it.character || "", memo: it.memo || "", favorite: !!it.favorite, createdAt: it.createdAt || Date.now(), fileName: it.fileName || "image", mime: it.mime || blob.type || "image/png" };
+        await storePut("items", item);
+        await storePut("blobs", { id: it.id, blob: blob });
+        await storePut("thumbs", { id: it.id, blob: thumb || blob });
+        existing.add(it.id); added++;
+      }
+    }
+    await loadAll();
+    setStatus("復元しました: 追加 " + added + " 件、スキップ（重複など） " + skipped + " 件。");
+  } catch (err) { console.error(err); setStatus("復元に失敗しました: " + err.message); }
+});
+
+/* 起動 */
+openDB().then((d) => { db = d; return loadAll(); }).catch((e) => { console.error(e); setStatus("データベースを開けませんでした: " + e.message); });
+</script>
+</body>
+</html>
